@@ -46,6 +46,8 @@ import networkx
 import time
 
 from . import AtomTyper
+from score_utils import load_trajectory
+from score_utils import scores_vs_time
 
 #=============================================================================================
 # ATOMTYPE SAMPLER
@@ -371,7 +373,6 @@ class AtomTypeSampler(object):
         else:
             # Add the new alpha at the end
             proposed_atomtype = atom1type[0][:len(atom1type[0])-1] + '$(*' + bondset[0] + atom2type[0] + ')' + ']'
-            #print " #### More ALPHA: " + str(proposed_atomtype)
         proposed_typename = atom1type[1] + ' ' + bondset[1] + ' ' + atom2type[1] + ' '
         return proposed_atomtype, proposed_typename
 
@@ -396,14 +397,12 @@ class AtomTypeSampler(object):
         number_brackets = 0
         # find closed alpha atom
         closeAlpha = atom1type[0].find(']')
-
         # This has two atoms (already has an alpha atom)
         if count == 2: 
             proposed_atomtype = atom1type[0][:closeAlpha+1]
             proposed_atomtype += bondset[0] + atom2type[0] + ')]'
             proposed_typename = atom1type[1] + bondset[1] + ' ' + atom2type[1]
             if self.verbose: print("ADD FIRST BETA SUB: proposed --- %s %s" % ( str(proposed_atomtype), str(proposed_typename)))
-
         elif count > 2:
             # Has an alpha atom with at least 1 beta atom
             proposed_atomtype = atom1type[0][:closeAlpha+1]
@@ -411,7 +410,6 @@ class AtomTypeSampler(object):
             proposed_atomtype += atom1type[0][closeAlpha+1:]
             proposed_typename = atom1type[1] + ' (' + bondset[1] + ' ' + atom2type[1] + ')'
             if self.verbose: print("ADD MORE BETA SUB: proposed --- %s %s" % ( str(proposed_atomtype), str(proposed_typename)))
-
         else:
             # Has only 1 atom which means there isn't an alpha atom yet, add an alpha atom instead
             proposed_atomtype, proposed_typename = self.AddAlphaSubstituentAtom(atom1type, bondset, atom2type) 
@@ -430,7 +428,6 @@ class AtomTypeSampler(object):
         natomtypes = len(proposed_atomtypes)
         ndecorators = len(self.decorators)
         natombasetypes = len(self.atom_basetype)
-        #proposed_basetypes = copy.deepcopy(self.atom_basetype)
 
         valid_proposal = True
 
@@ -516,7 +513,6 @@ class AtomTypeSampler(object):
                 # Update proposed parent dictionary
                 proposed_parents[atom1type[0]].append([proposed_atomtype, proposed_typename])
 
-
             proposed_parents[proposed_atomtype] = []
 
             # Check that we haven't already determined this atom type isn't matched in the dataset.
@@ -532,14 +528,11 @@ class AtomTypeSampler(object):
                 if self.verbose: print("Atom type already exists; rejecting to avoid duplication.")
                 valid_proposal = False
             
-
             # Check for valid proposal before proceeding.
             if not valid_proposal:
                 return False
 
             # Insert atomtype immediately after.
-            #atomtype_index = random.randint(0, natomtypes-1) # Temporary: Because its not using atomtypes already created, random insertion
-            #proposed_atomtypes.insert(atomtype_index+1, [proposed_atomtype, proposed_typename])
             proposed_atomtypes.insert(natomtypes, [proposed_atomtype, proposed_typename]) # Insert in the end (hierarchy issue)
             # Try to type all molecules.
             try:
@@ -779,7 +772,7 @@ class AtomTypeSampler(object):
                 self.print_parent_tree(new_roots, start+'\t')
 
 
-    def run(self, niterations, trajFile=None):
+    def run(self, niterations, trajFile=None, plotFile=None):
         """
         Run atomtype sampler for the specified number of iterations.
 
@@ -789,6 +782,8 @@ class AtomTypeSampler(object):
             The specified number of iterations
         trajFile : str, optional, default=None
             Output trajectory filename
+        plotFile : str, optional, default=None
+            Filename for output of plot of score versus time
 
         Returns
         ----------
@@ -842,6 +837,45 @@ class AtomTypeSampler(object):
             start = ['Iteration,Index,Smarts,ParNum,ParentParNum,RefType,Matches,Molecules,FractionMatched,Denominator\n']
             f.writelines(start + self.traj)
             f.close()
+ 
+            # Get/print some stats on trajectory
+            # Load timeseries
+            timeseries = load_trajectory( trajFile )
+            time_fractions = scores_vs_time( timeseries )
+            print("Maximum score achieved: %.2f" % max(time_fractions['all']))
+
+        # If desired, make plot
+        if plotFile:
+            import pylab as pl
+            if not trajFile:
+                raise Exception("Cannot construct plot of trajectory without a trajectory file.")
+            # Load timeseries
+            timeseries = load_trajectory( trajFile )
+            time_fractions = scores_vs_time( timeseries )
+
+            # Plot overall score
+            pl.plot( time_fractions['all'], 'k-', linewidth=2.0)
+
+            # Grab reference types other than 'all'
+            plot_others = False
+            if plot_others:
+                reftypes = time_fractions.keys()
+                reftypes.remove('all')
+
+                # Plot scores for individual types
+                for reftype in reftypes:
+                    pl.plot( time_fractions[reftype] )
+            
+            # Axis labels and legend
+            pl.xlabel('Iteration')
+            pl.ylabel('Fraction of reference type found')
+            if plot_others:
+                pl.legend(['all']+reftypes, loc="lower right")
+            pl.ylim(-0.1, 1.1)
+
+            # Save
+            pl.savefig( plotFile )
+
 
         #Compute final type stats
         [atom_typecounts, molecule_typecounts] = self.compute_type_statistics(self.atomtypes, self.molecules)
